@@ -1,0 +1,351 @@
+# EnergyPEFT: Energy-Aware Parameter-Efficient Fine-Tuning Framework
+
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/release/python-380/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Energy Efficient](https://img.shields.io/badge/AI-Energy%20Efficient-green.svg)](https://github.com/yourusername/energypeft)
+
+**EnergyPEFT** is a comprehensive framework for energy-aware parameter-efficient fine-tuning (PEFT) of large language models. It provides real-time energy monitoring, carbon emission tracking, and intelligent optimization strategies to make AI model training more sustainable and cost-effective.
+
+## 🌱 Key Features
+
+- **⚡ 1- Real-time Energy Monitoring**: Track GPU and CPU energy consumption during training
+- **🧠 2- Smart Sampling**: Gradient-based importance sampling for efficient data usage
+- **📊 3- Adaptive Batching**: Dynamic batch size optimization based on energy constraints
+- **🛑 4- Early Stopping**: Energy-efficiency-based stopping criteria
+- **💰 5- Budget Allocation**: Strategic energy budget management across training phases
+- **🌍 6- Carbon Tracking**: Monitor and minimize CO2 emissions during training
+- **🔧 7- Multiple Integrations**: Support for HuggingFace PEFT, LlamaFactory, and direct Transformers
+- **🎯 8- Drop-in Trainer**: GreenTrainer as a direct replacement for transformers.Trainer
+
+## 📁 Project Structure
+
+```
+
+Green PEFT/                                    # Root project directory
+├── setup.py                                  # Package installation configuration
+├── README.md                                 # Project documentation  
+├── requirements.txt                          # Python dependencies
+├── .gitignore                               # Git ignore rules
+├── quick_test.py
+├── llamafactory_example.py
+├──test_energy_peft_installation.py
+│
+├── energypeft/                              # Main Python package
+│   ├── __init__.py                         # Package entry point & main API
+│   │
+│   ├── core/                               # Core energy optimization components (moved 
+│   │   ├── __init__.py                    # Core module exports
+│   │   ├── energy_monitor.py              # Step 1: Real-time monitoring
+│   │   ├── smart_sampler.py               # Step 2,4: Energy-constrained sampling: Gradient importance sampling  
+│   │   ├── adaptive_batcher.py            # Step 3: Dynamic batch sizing
+│   │   └── early_stopper.py               # Step 5: Energy-efficiency stopping
+│   │
+│   ├── integrations/                       # Framework integrations
+│   │   ├── __init__.py                    # Integration module exports
+│   │   ├── huggingface_peft.py            # HuggingFace PEFT integration
+│   │   ├── llamafactory.py                # LlamaFactory wrapper with energy awareness
+│   │   └── transformers.py                # Direct transformers integration
+│   │
+│   ├── trainers/                           # Energy-aware trainer classes 
+│   │   ├── __init__.py                    # Trainer module exports  
+│   │   └── green_trainer.py               # Drop-in replacement for transformers.Trainer
+│   │
+│   ├── utils/                              # Utility modules
+│   │   ├── __init__.py                    # Utils module exports
+│   │   ├── carbon_scheduler.py            # Step 7: Carbon-aware scheduling
+│   │   ├── budget_allocator.py            # Step 6: Strategic budget
+ reports (evolved from metrics.py)
+│   │   └── hardware_profiler.py           # Hardware-specific energy profiling (NEW)
+│   │
+│   └── examples/                           # Usage examples & demos
+│       ├── __init__.py                    # Examples module exports
+│       ├── llamafactory_example.py        # LlamaFactory training example
+│       ├── lora_example.py               # LoRA fine-tuning example
+│
+├── tests/                                  # Test suite
+│   ├── __init__.py                        # Test module init
+│   ├── test_energy_monitor.py             # Energy monitoring tests
+│   ├── test_smart_sampler.py              # Smart sampling tests
+│   ├── test_adaptive_batcher.py           # Adaptive batching tests
+│   ├── test_integrations.py               # Integration tests
+│   └── test_end_to_end.py                 # End-to-end workflow tests
+│
+├── docs/                                   # Documentation
+│   ├── index.md                           # Documentation home
+│   ├── installation.md                    # Installation guide
+│   ├── quickstart.md                      # Quick start guide
+│   ├── api_reference.md                   # API documentation
+│   └── examples.md                        # Usage examples
+│
+└── scripts/                                # Development & utility scripts
+    ├── benchmark_energy.py                # Energy consumption benchmarks
+    ├── setup_environment.py               # Development environment setup
+    └── generate_reports.py                # Energy report generation
+```
+
+## 🚀 Quick Start
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/erfan38/energypeft.git
+cd energypeft
+
+# Install in development mode
+pip install -e .
+
+# Verify installation
+python quick_test.py
+```
+
+### Basic Usage
+
+#### Current API (Available Now)
+
+```python
+import energypeft
+from transformers import AutoModel, AutoTokenizer
+from peft import get_peft_model, LoraConfig
+
+# Initialize EnergyPEFT framework
+energy_peft = energypeft.EnergyPEFT(
+    energy_budget_wh=100.0,      # 100 Watt-hours energy budget
+    base_batch_size=32,          # Starting batch size
+    importance_weight=0.7        # Balance between importance and diversity
+)
+
+# Load your model and tokenizer
+model = AutoModel.from_pretrained("your-model-name")
+tokenizer = AutoTokenizer.from_pretrained("your-model-name")
+
+# Create PEFT model
+peft_config = LoraConfig(r=16, lora_alpha=32)
+model = get_peft_model(model, peft_config)
+
+# Wrap trainer with energy awareness
+trainer = energy_peft.wrap_trainer(
+    trainer_type="huggingface",
+    model=model,
+    tokenizer=tokenizer,
+    train_dataset=your_dataset
+)
+
+# Train with automatic energy optimization
+trainer.train()
+```
+
+#### Future API (GreenTrainer - In Development)
+
+```python
+import energypeft
+from transformers import TrainingArguments
+
+# Drop-in replacement for transformers.Trainer
+trainer = energypeft.GreenTrainer(
+    model=model,
+    tokenizer=tokenizer,
+    args=TrainingArguments(...),
+    train_dataset=dataset,
+    energy_budget_wh=100.0  # Energy-aware training
+)
+
+# Train with automatic energy optimization
+trainer.train()
+```
+
+## 🎯 Framework Integrations
+
+### HuggingFace PEFT Integration
+```python
+# Energy-aware HuggingFace PEFT training
+trainer = energy_peft.wrap_trainer(
+    trainer_type="huggingface",
+    model=model,
+    tokenizer=tokenizer,
+    train_dataset=dataset
+)
+```
+
+### LlamaFactory Integration
+```python
+# LlamaFactory with energy constraints
+from energypeft.integrations import LlamaFactoryEnergyWrapper
+
+llamafactory_wrapper = LlamaFactoryEnergyWrapper(
+    energy_framework=energy_peft,
+    llamafactory_config=your_config
+)
+
+# Run energy-optimized training
+results = llamafactory_wrapper.train_with_energy_monitoring()
+```
+
+## 📊 Core Components
+
+### Energy Monitor (`core/energy_monitor.py`)
+Real-time tracking of:
+- GPU power consumption (NVIDIA GPUs)
+- CPU energy usage
+- Memory utilization
+- Carbon footprint estimation
+
+### Smart Sampler (`core/smart_sampler.py`)
+- **Gradient-based importance scoring**: Identifies most valuable training samples
+- **Energy-constrained sampling**: Adapts sample selection based on energy budget
+- **Without-replacement sampling**: Ensures efficient data coverage
+
+### Adaptive Batcher (`core/adaptive_batcher.py`)
+- **Dynamic batch sizing**: Adjusts batch size based on remaining energy
+- **Progress-aware optimization**: Smaller batches in later training phases
+- **Memory-conscious adaptation**: Prevents OOM errors
+
+### Energy-Efficiency Early Stopping (`core/early_stopper.py`)
+- **Energy efficiency metrics**: Stops training when efficiency drops
+- **Budget-aware termination**: Prevents energy budget overrun
+- **Configurable patience**: Balances efficiency with training completeness
+
+### Budget Allocator (`utils/budget_allocator.py`)
+- **Strategic energy allocation**: Distributes energy budget across training phases
+- **Phase-aware optimization**: Adapts energy usage for different training stages
+- **Resource prioritization**: Focuses energy on most important training steps
+
+### Carbon Scheduler (`utils/carbon_scheduler.py`)
+- **CO2 emission tracking**: Real-time carbon footprint monitoring
+- **Carbon-aware scheduling**: Optimizes training timing for lower emissions
+- **Sustainability metrics**: Comprehensive environmental impact reporting
+
+## 🔧 Configuration Options
+
+```python
+energy_peft = energypeft.EnergyPEFT(
+    energy_budget_wh=150.0,           # Total energy budget in Watt-hours
+    base_batch_size=16,               # Initial batch size
+    importance_weight=0.8,            # Importance vs diversity balance (0-1)
+    min_batch_size=1,                 # Minimum allowed batch size
+    patience=5,                       # Early stopping patience
+    energy_tracking_interval=10       # Energy measurement frequency (steps)
+)
+```
+
+## 📈 Energy Reporting
+
+EnergyPEFT provides comprehensive energy usage reports:
+
+- **Total energy consumed** (Wh)
+- **Carbon emissions** (kg CO2)
+- **Energy efficiency** (samples/Wh)
+- **Budget utilization** (%)
+- **Cost estimation** (cloud training)
+- **Sustainability metrics**
+
+## 🧪 Examples
+
+Check the `examples/` directory for detailed usage examples:
+
+- **`api_demo.py`**: API usage demonstrations
+- **`greenpeft_usage_examples.py`**: Comprehensive usage examples
+- **`lora_example.py`**: LoRA fine-tuning with energy awareness
+- **Root level `llamafactory_example.py`**: LlamaFactory integration demo
+
+## 🧠 Research & Development
+
+The `src/` directory contains research notebooks and development files:
+- Experimental implementations
+- Research prototypes
+- Performance analysis
+- Development examples
+
+The `papers/` directory contains academic documentation and research papers related to energy-efficient AI training.
+
+## 📋 Requirements
+
+- Python >= 3.8
+- PyTorch >= 2.0.0
+- Transformers >= 4.30.0
+- PEFT >= 0.4.0
+- CodeCarbon >= 2.1.4
+- NVIDIA GPU (recommended for energy monitoring)
+
+## 🚀 Installation Test
+
+After installation, run our comprehensive test:
+
+```bash
+# Quick functionality test
+python quick_test.py
+
+# Energy PEFT specific test
+python test_energy_peft_installation.py
+
+# Test with current API
+python -c "import energypeft; print('✅ EnergyPEFT imported successfully!')"
+```
+
+# ================================================================
+# RECOMMENDED USER DOCUMENTATION
+# ================================================================
+
+"""
+📚 HOW TO DOCUMENT THESE PATTERNS:
+
+BEGINNER USERS → Start with Pattern 1 (GreenTrainer)
+"Just replace Trainer with GreenTrainer for automatic energy optimization!"
+
+INTERMEDIATE USERS → Use Pattern 2 (EnergyPEFT Framework)  
+"Get more control over energy components while keeping it simple!"
+
+ADVANCED USERS → Use Pattern 3 (Direct Components)
+"Build custom energy-aware training solutions!"
+
+RESEARCH USERS → Use Pattern 4 (PEFT Integration)
+"Combine energy efficiency with parameter-efficient fine-tuning!"
+"""
+
+## 🤝 Contributing
+
+Contributions are welcome! This project aims to make AI training more sustainable and accessible. Areas for contribution:
+
+- Additional framework integrations
+- Hardware-specific optimizations
+- Energy profiling improvements
+- Documentation and examples
+- Research on energy-efficient training methods
+
+## 🎓 Research Applications
+
+EnergyPEFT is particularly valuable for:
+
+- **Academic research** with limited computational budgets
+- **Sustainable AI development** focused on reducing carbon footprint
+- **Cost-efficient fine-tuning** in cloud environments
+- **Green AI research** and energy-aware machine learning
+- **Smart contract vulnerability detection** and security research
+- **Resource-constrained environments** with limited power availability
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- Built with [HuggingFace Transformers](https://github.com/huggingface/transformers) and [PEFT](https://github.com/huggingface/peft)
+- Energy monitoring powered by [CodeCarbon](https://github.com/mlco2/codecarbon)
+- Inspired by the need for sustainable AI development and research
+
+## 📚 Citation
+
+If you use EnergyPEFT in your research, please cite:
+
+```bibtex
+@software{energypeft2025,
+  title={EnergyPEFT: Energy-Aware Parameter-Efficient Fine-Tuning Framework},
+  author={Fatemeh Erfan},
+  year={2025},
+  url={https://github.com/yourusername/energypeft}
+}
+```
+
+---
+
+ **Making AI Training Sustainable, One Model at a Time** 
