@@ -3,16 +3,17 @@ import json
 import os
 from torch.utils.data import DataLoader
 from transformers import Trainer, TrainingArguments
-from typing import Optional
+from typing import Optional, Dict, List, Any
 
 # Import your custom components
+# Ensure these paths match your project structure
 from ..core.energy_monitor import EnergyMonitor
 from ..core.smart_sampler import EnergyAwareSampler
 
 class GreenTrainer(Trainer):
     """
-    Energy-Aware Trainer for LLaMA.
-    Replaces random sampling with 'Value-per-Watt' sampling
+    Energy-Aware Trainer for LLaMA/PEFT.
+    Replaces random sampling with 'Value-per-Watt' sampling (Loss/Length)
     and enforces a strict energy budget.
     """
 
@@ -31,16 +32,14 @@ class GreenTrainer(Trainer):
         self.energy_budget_wh = energy_budget_wh
 
         # 1. Initialize Energy Monitoring
-        # This tracks GPU/CPU usage in the background
         self.energy_monitor = EnergyMonitor(energy_budget_wh)
 
         # 2. Initialize Smart Sampler (The "Brain")
-        # We pass the dataset so it can pre-calculate sequence lengths (Energy Cost)
+        # We pass the dataset so it can manage indices
         self.smart_sampler = EnergyAwareSampler(
             dataset=train_dataset,
             energy_monitor=self.energy_monitor,
-            base_batch_size=self.args.per_device_train_batch_size,
-            importance_weight=importance_weight
+            base_batch_size=self.args.per_device_train_batch_size
         )
 
         print(f"🌱 GreenTrainer initialized with {energy_budget_wh}Wh energy budget")
@@ -85,9 +84,10 @@ class GreenTrainer(Trainer):
             metrics = self.energy_monitor.stop_monitoring()
             self._save_energy_report(metrics)
 
-    def training_step(self, model, inputs):
+    def training_step(self, model, inputs, num_items_in_batch=None):
         """
         OVERRIDE: Checks budget before every step.
+        Updated to support new Transformers API (num_items_in_batch).
         """
         # 1. Check Energy Budget
         if not self.energy_monitor.has_energy():
@@ -99,31 +99,80 @@ class GreenTrainer(Trainer):
         self.energy_monitor.log_step()
 
         # 3. Proceed with standard training step (Forward + Backward)
-        # Note: We don't calculate gradients manually anymore. 
-        # We let 'compute_loss' handle the feedback.
-        return super().training_step(model, inputs)
+        # We pass the new argument to the parent class to avoid the crash
+        return super().training_step(model, inputs, num_items_in_batch)
+    
+    # def training_step(self, model, inputs):
+    #     """
+    #     OVERRIDE: Checks budget before every step.
+    #     """
+    #     # 1. Check Energy Budget
+    #     if not self.energy_monitor.has_energy():
+    #         print("⚠️ Energy budget exhausted! Stopping training immediately.")
+    #         self.control.should_training_stop = True
+    #         return torch.tensor(0.0, device=model.device, requires_grad=True)
+
+    #     # 2. Log the step's energy consumption
+    #     self.energy_monitor.log_step()
+
+    #     # 3. Proceed with standard training step
+    #     return super().training_step(model, inputs)
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         """
-        OVERRIDE: Captures Loss to update the Smart Sampler.
-        This solves the 'Chicken and Egg' problem by using Loss instead of Gradients.
+        OVERRIDE: Captures Per-Sample Loss and Sequence Length.
+        This updates the Smart Sampler with 'Value (Loss) / Cost (Length)'.
         """
-        # 1. Run the Forward Pass (Standard)
-        if return_outputs:
-            loss, outputs = super().compute_loss(model, inputs, return_outputs=True, **kwargs)
+        # 1. Extract Sample Indices (CRITICAL STEP)
+        # Your dataset MUST have an 'id' or 'index' column.
+        if "index" in inputs:
+            sample_indices = inputs.pop("index").cpu().tolist()
+        elif "id" in inputs:
+            sample_indices = inputs.pop("id").cpu().tolist()
         else:
-            loss = super().compute_loss(model, inputs, return_outputs=False, **kwargs)
+            # Fallback: If no indices, just run standard loss (sampler won't update efficiently)
+            return super().compute_loss(model, inputs, return_outputs, **kwargs)
 
-        # 2. FEEDBACK LOOP: Send loss back to Sampler
-        # We use .item() to detach from graph and avoid memory leaks
-        current_loss_value = loss.item() if isinstance(loss, torch.Tensor) else loss
+        # 2. Forward Pass
+        outputs = model(**inputs)
         
-        # The sampler needs to know the 'value' of the batch we just processed.
-        # High Loss = High Learning Opportunity for next time.
-        # We update the sampler's internal scores.
-        self.smart_sampler.update_batch_outcomes(current_loss_value)
+        # 3. Compute Per-Sample Loss (Raw, Unreduced)
+        # We need to manually calculate CrossEntropy to get loss per item
+        logits = outputs.get("logits")
+        labels = inputs.get("labels")
+        
+        # Shift so that tokens < n predict n
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+        
+        # Calculate loss per token, then average over sequence length to get loss per sample
+        loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+        loss_per_token = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+        
+        # Reshape back to (Batch, Seq_Len) and average rows
+        loss_per_sample = loss_per_token.view(shift_labels.size(0), -1).mean(dim=1)
+        
+        # 4. Calculate Sequence Lengths (Energy Proxy)
+        # Use attention mask to count actual non-padding tokens
+        if "attention_mask" in inputs:
+            # We subtract 1 because labels are shifted by 1
+            lengths = (inputs["attention_mask"].sum(dim=1) - 1).cpu().tolist()
+        else:
+            lengths = [inputs["input_ids"].shape[1] - 1] * len(sample_indices)
 
-        return (loss, outputs) if return_outputs else loss
+        # 5. FEEDBACK LOOP: Update the Smart Sampler
+        # Send (Index, Loss, Length) so it can compute Score = Loss / Length
+        losses_cpu = loss_per_sample.detach().cpu().tolist()
+        
+        # Ensure lengths are at least 1 to avoid division errors
+        lengths = [max(1, l) for l in lengths]
+        
+        self.smart_sampler.update_batch_outcomes(sample_indices, losses_cpu, lengths)
+
+        # 6. Return mean loss for Backprop
+        mean_loss = loss_per_sample.mean()
+
+        return (mean_loss, outputs) if return_outputs else mean_loss
 
     def _save_energy_report(self, metrics):
         """
@@ -132,12 +181,17 @@ class GreenTrainer(Trainer):
         # Estimate CO2 (Example: 0.4 kg/kWh global avg)
         co2_emissions = (metrics.total_energy_wh / 1000.0) * 0.4
 
+        # Safely get final loss
+        final_loss = 0
+        if hasattr(self, 'state') and hasattr(self.state, 'log_history') and self.state.log_history:
+             final_loss = self.state.log_history[-1].get('train_loss', 0)
+
         report = {
             "total_energy_wh": metrics.total_energy_wh,
             "budget_used_percent": metrics.budget_used_percent,
             "training_duration_hours": (metrics.timestamp - metrics.start_time) / 3600.0 if hasattr(metrics, 'start_time') else 0,
             "co2_emissions_kg": co2_emissions,
-            "final_loss": getattr(self.state, 'log_history', [{}])[-1].get('train_loss', 0)
+            "final_loss": final_loss
         }
 
         with open("green_training_report.json", "w") as f:
